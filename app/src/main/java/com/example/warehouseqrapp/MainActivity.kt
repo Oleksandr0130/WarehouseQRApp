@@ -21,13 +21,16 @@ import com.example.warehouseqrapp.ui.theme.WarehouseQRAppTheme
 class MainActivity : ComponentActivity() {
 
     private val requestPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* isGranted */ _ -> }
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
+            if (!isGranted) {
+                // Тут можно показать тост или диалог о том, что камера нужна
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Запрос runtime-разрешения камеры (Android 6+)
-        ensureCameraPermission()
+        checkCameraPermission()
 
         setContent {
             WarehouseQRAppTheme {
@@ -36,7 +39,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun ensureCameraPermission() {
+    private fun checkCameraPermission() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED
         ) {
@@ -50,21 +53,10 @@ fun WebViewScreen(url: String) {
     AndroidView(
         factory = { context ->
             WebView(context).apply {
-                // Базовые клиенты
                 webViewClient = WebViewClient()
                 webChromeClient = object : WebChromeClient() {
-                    // ВАЖНО: grant только из UI-потока, иначе запрос может «потеряться» в WebView
                     override fun onPermissionRequest(request: PermissionRequest?) {
-                        request ?: return
-                        (context as? ComponentActivity)?.runOnUiThread {
-                            // Разрешаем только видеозахват
-                            val needsVideo = request.resources.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
-                            if (needsVideo) {
-                                request.grant(arrayOf(PermissionRequest.RESOURCE_VIDEO_CAPTURE))
-                            } else {
-                                request.deny()
-                            }
-                        }
+                        request?.grant(request.resources)
                     }
                 }
 
@@ -75,25 +67,24 @@ fun WebViewScreen(url: String) {
                     allowContentAccess = true
                     allowFileAccess = true
                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+
                     useWideViewPort = true
                     loadWithOverviewMode = true
-
-                    // Обновляем стили/скрипты без кэша, чтобы правки подтягивались корректно
+                    // ключевое: отключаем кэш, чтобы забрать свежие CSS
                     cacheMode = WebSettings.LOAD_NO_CACHE
-                    // (не обязательно, но удобно) убираем метку "wv" из UA
+                    // (опционально) userAgent без "wv"
                     userAgentString = userAgentString.replace("wv", "")
                 }
 
-                // Чистим кэш/историю и включаем аппаратное ускорение
+                // Сброс любого накопленного кэша/истории
                 clearCache(true)
                 clearHistory()
                 setLayerType(WebView.LAYER_TYPE_HARDWARE, null)
 
-                // Загружаем приложение (добавляем параметр, чтобы наверняка обойти кэш прокси/сети)
-                val sep = if (url.contains("?")) "&" else "?"
-                loadUrl(url + sep + "v=" + System.currentTimeMillis())
+                loadUrl(url + (if (url.contains("?")) "&" else "?") + "v=" + System.currentTimeMillis())
             }
         },
         modifier = Modifier.fillMaxSize()
     )
 }
+
