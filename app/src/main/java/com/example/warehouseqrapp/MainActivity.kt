@@ -1,6 +1,7 @@
 package com.example.warehouseqrapp
 
 import android.Manifest
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.webkit.PermissionRequest
@@ -30,6 +31,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Жёстко блокируем автоповорот для всей Activity (дублирует настройку из манифеста)
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+
         checkCameraPermission()
 
         setContent {
@@ -56,6 +60,7 @@ fun WebViewScreen(url: String) {
                 webViewClient = WebViewClient()
                 webChromeClient = object : WebChromeClient() {
                     override fun onPermissionRequest(request: PermissionRequest?) {
+                        // Разрешаем запрошенные ресурсы (как в исходнике)
                         request?.grant(request.resources)
                     }
                 }
@@ -87,4 +92,3 @@ fun WebViewScreen(url: String) {
         modifier = Modifier.fillMaxSize()
     )
 }
-
