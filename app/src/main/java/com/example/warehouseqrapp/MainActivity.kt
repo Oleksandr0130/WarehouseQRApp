@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             WarehouseQRAppTheme {
-                WebViewScreen("https://warehouse-qr-app-8adwv.ondigitalocean.app/api/")
+                WebViewScreen("https://warehouse-qr-app-8adwv.ondigitalocean.app")
             }
         }
     }
