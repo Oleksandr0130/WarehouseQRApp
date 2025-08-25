@@ -53,6 +53,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview:1.5.0")
     implementation("androidx.activity:activity-compose:1.7.0")
     implementation("androidx.webkit:webkit:1.6.0")
+    implementation(libs.androidx.browser)
     // Тестовые зависимости
     testImplementation("junit:junit:4.13.2") // Для локальных тестов
     androidTestImplementation("androidx.test.ext:junit:1.1.5") // Для инструментальных тестов
