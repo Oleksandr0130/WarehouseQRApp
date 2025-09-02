@@ -76,13 +76,9 @@ class MainActivity : ComponentActivity() {
                         allowFileAccess = true
                         mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
-                        // ✅ Главное: отключаем автосжатие страницы и фиксируем масштаб
-                        useWideViewPort = false
-                        loadWithOverviewMode = false
-                        setSupportZoom(false)
-                        builtInZoomControls = false
-                        displayZoomControls = false
-                        textZoom = 100
+                        useWideViewPort = true
+                        loadWithOverviewMode = true
+                        cacheMode = WebSettings.LOAD_NO_CACHE
 
                         // важно для window.open и банковских SCA-окон
                         javaScriptCanOpenWindowsAutomatically = true
@@ -91,9 +87,6 @@ class MainActivity : ComponentActivity() {
                         // немного «маскируем» WebView, чтобы некоторые сайты не скрывали кнопки кошельков
                         userAgentString = userAgentString.replace("wv", "")
                     }
-
-                    // 100% масштаб по умолчанию
-                    setInitialScale(100)
 
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(
