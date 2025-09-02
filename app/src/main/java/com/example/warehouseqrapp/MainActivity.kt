@@ -76,9 +76,14 @@ class MainActivity : ComponentActivity() {
                         allowFileAccess = true
                         mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
-                        useWideViewPort = true
-                        loadWithOverviewMode = true
+                        useWideViewPort = false
+                        loadWithOverviewMode = false
                         cacheMode = WebSettings.LOAD_NO_CACHE
+
+                        setSupportZoom(false)
+                        builtInZoomControls = false
+                        displayZoomControls = false
+                        textZoom = 100
 
                         // важно для window.open и банковских SCA-окон
                         javaScriptCanOpenWindowsAutomatically = true
@@ -151,3 +156,4 @@ class MainActivity : ComponentActivity() {
         )
     }
 }
+
