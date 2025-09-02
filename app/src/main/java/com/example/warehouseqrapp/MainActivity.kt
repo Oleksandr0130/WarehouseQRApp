@@ -1,3 +1,4 @@
+
 package com.example.warehouseqrapp
 
 import android.Manifest
@@ -76,14 +77,9 @@ class MainActivity : ComponentActivity() {
                         allowFileAccess = true
                         mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
-                        useWideViewPort = false
-                        loadWithOverviewMode = false
+                        useWideViewPort = true
+                        loadWithOverviewMode = true
                         cacheMode = WebSettings.LOAD_NO_CACHE
-
-                        setSupportZoom(false)
-                        builtInZoomControls = false
-                        displayZoomControls = false
-                        textZoom = 100
 
                         // важно для window.open и банковских SCA-окон
                         javaScriptCanOpenWindowsAutomatically = true
@@ -156,4 +152,3 @@ class MainActivity : ComponentActivity() {
         )
     }
 }
-
