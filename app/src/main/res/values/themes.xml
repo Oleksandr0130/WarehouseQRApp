@@ -1,5 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.WarehouseQRApp" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Базовая тема приложения (как у тебя изначально) -->
+    <style name="Theme.WarehouseQRApp" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- рисуем под системными барами -->
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+
+        <!-- прозрачные системные панели -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+
+        <!-- фон окна прозрачный -->
+        <item name="android:windowBackground">@android:color/transparent</item>
+
+        <!-- не используем устаревшие полупрозрачные флаги -->
+        <item name="android:windowTranslucentStatus">false</item>
+        <item name="android:windowTranslucentNavigation">false</item>
+    </style>
+
 </resources>
