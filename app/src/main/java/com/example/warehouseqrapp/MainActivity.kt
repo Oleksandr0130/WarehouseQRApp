@@ -19,6 +19,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.core.view.WindowCompat
 import com.example.warehouseqrapp.ui.theme.WarehouseQRAppTheme
 
 class MainActivity : ComponentActivity() {
@@ -31,6 +35,8 @@ class MainActivity : ComponentActivity() {
 
         // фикс портретной ориентации
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+
+        WindowCompat.setDecorFitsSystemWindows(window, true)
 
         checkCameraPermission()
 
@@ -149,6 +155,8 @@ class MainActivity : ComponentActivity() {
                 }
             },
             modifier = Modifier.fillMaxSize()
+
+                .windowInsetsPadding(WindowInsets.systemBars)
         )
     }
 }
