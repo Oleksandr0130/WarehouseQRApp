@@ -18,7 +18,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.example.warehouseqrapp.ui.theme.WarehouseQRAppTheme
 import android.graphics.Color as AColor
@@ -41,36 +42,39 @@ class MainActivity : ComponentActivity() {
         // фикс портретной ориентации
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
 
-        // Рисуем edge-to-edge, но отступы добавим сами через Insets в Compose
+        // Рисуем edge-to-edge (сами управляем отступами)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        // Делаем системные панели прозрачными
+        // Делаем панели прозрачными
         window.statusBarColor = AColor.TRANSPARENT
         window.navigationBarColor = AColor.TRANSPARENT
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            // на всякий: убираем разделительную линию навбара (если была)
             window.navigationBarDividerColor = AColor.TRANSPARENT
         }
 
-        // Цвет иконок в статус/нав баре:
-        // false = светлые иконки (под тёмный фон), true = тёмные иконки (под светлый фон)
-        WindowInsetsControllerCompat(window, window.decorView).apply {
+        // Настраиваем внешний вид иконок и скрываем ТОЛЬКО нижнюю панель
+        val controller = WindowInsetsControllerCompat(window, window.decorView).apply {
+            // Верх оставить как был (тёмный фон → светлые иконки; поменяй на true, если верх светлый)
             isAppearanceLightStatusBars = false
+            // На случай, если внезапно появится светлый навбар
             isAppearanceLightNavigationBars = false
         }
+        // Прячем именно навигационную панель; появляется свайпом
+        controller.hide(WindowInsetsCompat.Type.navigationBars())
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
         checkCameraPermission()
 
         setContent {
             WarehouseQRAppTheme {
-                // Общий фон под всеми экранами (будет виден и "за" панелями)
+                // Общий фон; будет виден и "за" панелями.
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        // поставь свой цвет/градиент; сейчас тёмный фон
                         .background(ComposeColor(0xFF0A1F2B))
-                        // Добавляем безопасные отступы, чтобы контент не залезал под панели
-                        .windowInsetsPadding(WindowInsets.systemBars)
+                        // Отступ только сверху под статус-бар (снизу тянемся до края)
+                        .windowInsetsPadding(WindowInsets.statusBars)
                 ) {
                     WebViewScreen("https://warehouse-qr-app-8adwv.ondigitalocean.app")
                 }
@@ -102,7 +106,7 @@ class MainActivity : ComponentActivity() {
         AndroidView(
             factory = { context ->
                 WebView(context).apply {
-                    // Прозрачный фон WebView, чтобы не было белых "флешей"
+                    // Прозрачный фон WebView, чтобы не было белых "просветов"
                     setBackgroundColor(AColor.TRANSPARENT)
 
                     // cookies (для GPay/редиректов)
