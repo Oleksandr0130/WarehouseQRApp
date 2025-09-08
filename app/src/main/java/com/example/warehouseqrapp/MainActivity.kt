@@ -18,7 +18,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -30,6 +32,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.example.warehouseqrapp.ui.theme.WarehouseQRAppTheme
 import android.graphics.Color as AColor
+import android.view.View as AView
 
 class MainActivity : ComponentActivity() {
 
@@ -42,24 +45,21 @@ class MainActivity : ComponentActivity() {
         // фикс портретной ориентации
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
 
-        // Рисуем edge-to-edge (сами управляем отступами)
+        // edge-to-edge
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        // Делаем панели прозрачными
+        // прозрачные панели
         window.statusBarColor = AColor.TRANSPARENT
         window.navigationBarColor = AColor.TRANSPARENT
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             window.navigationBarDividerColor = AColor.TRANSPARENT
         }
 
-        // Настраиваем внешний вид иконок и скрываем ТОЛЬКО нижнюю панель
+        // верх остаётся видимым; низ прячем
         val controller = WindowInsetsControllerCompat(window, window.decorView).apply {
-            // Верх оставить как был (тёмный фон → светлые иконки; поменяй на true, если верх светлый)
             isAppearanceLightStatusBars = false
-            // На случай, если внезапно появится светлый навбар
             isAppearanceLightNavigationBars = false
         }
-        // Прячем именно навигационную панель; появляется свайпом
         controller.hide(WindowInsetsCompat.Type.navigationBars())
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -68,13 +68,14 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             WarehouseQRAppTheme {
-                // Общий фон; будет виден и "за" панелями.
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(ComposeColor(0xFF0A1F2B))
-                        // Отступ только сверху под статус-бар (снизу тянемся до края)
-                        .windowInsetsPadding(WindowInsets.statusBars)
+                        // ВАЖНО: Отступ сверху под статус-бар + снизу под клавиатуру
+                        .windowInsetsPadding(
+                            WindowInsets.statusBars.union(WindowInsets.ime)
+                        )
                 ) {
                     WebViewScreen("https://warehouse-qr-app-8adwv.ondigitalocean.app")
                 }
@@ -96,7 +97,6 @@ class MainActivity : ComponentActivity() {
             val intent = CustomTabsIntent.Builder().build()
             intent.launchUrl(this, Uri.parse(url))
         } catch (_: Exception) {
-            // fallback – системный браузер
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }
     }
@@ -106,10 +106,12 @@ class MainActivity : ComponentActivity() {
         AndroidView(
             factory = { context ->
                 WebView(context).apply {
-                    // Прозрачный фон WebView, чтобы не было белых "просветов"
+                    // прозрачный фон, скролл
                     setBackgroundColor(AColor.TRANSPARENT)
+                    isVerticalScrollBarEnabled = true
+                    overScrollMode = AView.OVER_SCROLL_IF_CONTENT_SCROLLS
 
-                    // cookies (для GPay/редиректов)
+                    // cookies
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
@@ -125,11 +127,10 @@ class MainActivity : ComponentActivity() {
                         loadWithOverviewMode = true
                         cacheMode = WebSettings.LOAD_NO_CACHE
 
-                        // важно для window.open и банковских SCA-окон
                         javaScriptCanOpenWindowsAutomatically = true
                         setSupportMultipleWindows(true)
 
-                        // немного «маскируем» WebView, чтобы некоторые сайты не скрывали кнопки кошельков
+                        // «маскируем» WebView
                         userAgentString = userAgentString.replace("wv", "")
                     }
 
@@ -141,7 +142,6 @@ class MainActivity : ComponentActivity() {
                             val u = request.url
                             val host = u.host ?: ""
 
-                            // Все платёжные страницы и кошельки – открываем во внешнем браузере
                             val openExternally =
                                 host.endsWith("checkout.stripe.com") ||
                                         host.contains("pay.google.com") ||
@@ -164,7 +164,6 @@ class MainActivity : ComponentActivity() {
                             request?.grant(request.resources)
                         }
 
-                        // Обработка window.open – открываем такой URL во внешнем браузере
                         override fun onCreateWindow(
                             view: WebView?,
                             isDialog: Boolean,
@@ -184,7 +183,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    // Чистый старт
                     clearCache(true)
                     clearHistory()
                     setLayerType(WebView.LAYER_TYPE_HARDWARE, null)
