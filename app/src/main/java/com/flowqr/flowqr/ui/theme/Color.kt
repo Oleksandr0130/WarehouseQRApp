@@ -1,4 +1,4 @@
-package com.example.flowqr.ui.theme
+package com.flowqr.flowqr.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
