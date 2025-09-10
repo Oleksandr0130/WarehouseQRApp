@@ -1,4 +1,4 @@
-package com.example.warehouseqrapp.ui.theme
+package com.example.flowqr.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

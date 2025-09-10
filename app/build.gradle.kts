@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.warehouseqrapp"
+    namespace = "com.example.flowqr"
     compileSdk = 36
 
     defaultConfig {

@@ -1,4 +1,4 @@
-package com.example.warehouseqrapp
+package com.example.flowqr
 
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4

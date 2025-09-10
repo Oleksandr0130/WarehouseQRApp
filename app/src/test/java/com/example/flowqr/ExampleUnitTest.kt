@@ -1,4 +1,4 @@
-package com.example.warehouseqrapp
+package com.example.flowqr
 
 import org.junit.Test
 

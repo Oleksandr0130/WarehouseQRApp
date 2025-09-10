@@ -1,4 +1,4 @@
-package com.example.warehouseqrapp
+package com.example.flowqr
 
 import android.Manifest
 import android.content.Intent
@@ -32,7 +32,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.android.billingclient.api.*
-import com.example.warehouseqrapp.ui.theme.WarehouseQRAppTheme
+import com.example.flowqr.ui.theme.WarehouseQRAppTheme
 import java.io.BufferedOutputStream
 import java.io.BufferedReader
 import java.io.InputStreamReader
