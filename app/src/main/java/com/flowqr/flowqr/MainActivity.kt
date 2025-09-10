@@ -1,4 +1,4 @@
-package com.example.flowqr
+package com.flowqr.flowqr
 
 import android.Manifest
 import android.content.Intent
