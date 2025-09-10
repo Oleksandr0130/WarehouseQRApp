@@ -58,7 +58,8 @@ dependencies {
     implementation("androidx.compose.ui:ui:1.5.0")
     implementation("androidx.compose.material:material:1.5.0")
     implementation("androidx.compose.ui:ui-tooling-preview:1.5.0")
-    implementation("androidx.activity:activity-compose:1.7.0")
+    implementation("androidx.activity:activity-compose:1.9.2")
+    implementation("androidx.fragment:fragment-ktx:1.8.2")
     implementation("androidx.webkit:webkit:1.6.0")
     implementation(libs.androidx.browser)
 
