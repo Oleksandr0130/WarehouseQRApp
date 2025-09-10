@@ -32,7 +32,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.android.billingclient.api.*
-import com.example.flowqr.ui.theme.WarehouseQRAppTheme
+import com.flowqr.flowqr.ui.theme.WarehouseQRAppTheme
 import java.io.BufferedOutputStream
 import java.io.BufferedReader
 import java.io.InputStreamReader
