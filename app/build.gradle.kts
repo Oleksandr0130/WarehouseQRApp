@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.flowqr"
+    namespace = "com.flowqr.flowqr"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.warehouseqrapp"
+        applicationId = "com.flowqr.flowqr"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
