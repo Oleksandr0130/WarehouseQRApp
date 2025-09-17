@@ -65,7 +65,6 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = AColor.TRANSPARENT
