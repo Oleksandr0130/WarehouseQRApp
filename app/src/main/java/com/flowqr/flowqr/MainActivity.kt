@@ -65,6 +65,13 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // ---------- НОВОЕ: при каждом запуске чистим cookie и WebStorage ----------
+        // ВАЖНО: делать это ДО инициализации любого WebView
+        val cm = CookieManager.getInstance()
+        cm.removeAllCookies(null)
+        cm.flush()
+        WebStorage.getInstance().deleteAllData()
+        // -------------------------------------------------------------------------
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = AColor.TRANSPARENT
@@ -290,7 +297,9 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
                     overScrollMode = AView.OVER_SCROLL_IF_CONTENT_SCROLLS
 
                     CookieManager.getInstance().setAcceptCookie(true)
-                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                    // ---------- ИЗМЕНЕНО: отключаем third-party cookies в WebView ----------
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
+                    // -----------------------------------------------------------------------
 
                     settings.apply {
                         javaScriptEnabled = true
@@ -365,6 +374,9 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
                         }
                     }
 
+                    // Доп. подчистки в экземпляре WebView
+                    clearFormData()
+                    clearMatches()
                     clearCache(true)
                     clearHistory()
                     setLayerType(WebView.LAYER_TYPE_HARDWARE, null)
@@ -383,7 +395,7 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
     private fun toast(msg: String) =
         runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
 
-    // ===== JS-мост: window.billing.buy(...), window.billing.setAuth('Bearer ...') =====
+    // ===== JS-мост: window.billing.buy(.), window.billing.setAuth('Bearer .') =====
     @Keep
     inner class BillingJsBridge(private val activity: MainActivity) {
         @JavascriptInterface
