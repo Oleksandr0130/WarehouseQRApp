@@ -12,7 +12,7 @@ android {
         applicationId = "com.flowqr.flowqr"
         minSdk = 24
         targetSdk = 35
-        versionCode = 3
+        versionCode = 1
         versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
