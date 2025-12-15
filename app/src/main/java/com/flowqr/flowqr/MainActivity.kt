@@ -37,12 +37,14 @@ import android.view.View as AView
 
 class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
 
-    // ================== 🔧 CHANGED CONFIG ==================
-    private val PRODUCT_IDS = listOf(
-        "basic-monthly",
-        "basic-3months",
-        "basic-year"
-    )
+    // ================== ✅ CHANGED CONFIG ==================
+    // Это subscriptionId из Play Console (название/идентификатор подписки)
+    private val SUBSCRIPTION_ID = "flowqr_standard"
+
+    // Это basePlanId (не productId!) — ровно как у тебя в Play Console
+    private val BASE_PLAN_MONTH = "basic-monthly"
+    private val BASE_PLAN_3MONTH = "basic-3months"
+    private val BASE_PLAN_YEAR = "basic-year"
 
     private val VERIFY_URL =
         "https://warehouse-qr-app-8adwv.ondigitalocean.app/api/billing/play/verify"
@@ -50,12 +52,15 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
 
     private val bg = Executors.newSingleThreadExecutor()
 
-    // Billing
     private lateinit var billingClient: BillingClient
 
-    // 🆕 productId -> ProductDetails
-    private val productDetailsMap = mutableMapOf<String, ProductDetails>()
+    // ✅ CHANGED: теперь мы храним ProductDetails ТОЛЬКО для flowqr_standard
+    private var subscriptionDetails: ProductDetails? = null
 
+    // ✅ NEW: сюда будем запоминать какой basePlan выбрал пользователь
+    @Volatile private var pendingBasePlanId: String? = null
+
+    // JWT из WebView (через JS-мост)
     @Volatile private var authHeader: String? = null
 
     private val requestPermissionLauncher =
@@ -64,7 +69,7 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // ---- очистка cookies ----
+        // ---------- очистка cookies ----------
         CookieManager.getInstance().removeAllCookies(null)
         CookieManager.getInstance().flush()
         WebStorage.getInstance().deleteAllData()
@@ -109,22 +114,25 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
         billingClient.startConnection(object : BillingClientStateListener {
             override fun onBillingSetupFinished(result: BillingResult) {
                 if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                    queryAllProducts() // 🔧 CHANGED
+                    // ✅ CHANGED: грузим ТОЛЬКО одну подписку
+                    querySubscriptionDetails()
                     restoreEntitlement()
+                } else {
+                    toast("Billing not ready: ${result.debugMessage}")
                 }
             }
             override fun onBillingServiceDisconnected() {}
         })
     }
 
-    // 🆕 загрузка ВСЕХ подписок
-    private fun queryAllProducts() {
-        val products = PRODUCT_IDS.map {
+    // ✅ CHANGED: загрузка ProductDetails для flowqr_standard
+    private fun querySubscriptionDetails() {
+        val products = listOf(
             QueryProductDetailsParams.Product.newBuilder()
-                .setProductId(it)
+                .setProductId(SUBSCRIPTION_ID)
                 .setProductType(BillingClient.ProductType.SUBS)
                 .build()
-        }
+        )
 
         val params = QueryProductDetailsParams.newBuilder()
             .setProductList(products)
@@ -132,28 +140,34 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
 
         billingClient.queryProductDetailsAsync(params) { result, list ->
             if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                list.forEach { pd ->
-                    productDetailsMap[pd.productId] = pd
+                subscriptionDetails = list.firstOrNull()
+                if (subscriptionDetails == null) {
+                    toast("Subscription not found: $SUBSCRIPTION_ID")
                 }
             } else {
-                toast("Failed to load subscriptions")
+                toast("Failed to load subscription: ${result.debugMessage}")
             }
         }
     }
 
-    // 🔧 CHANGED: покупка конкретного плана
-    private fun launchPurchase(productId: String) {
-        val details = productDetailsMap[productId]
-        if (details == null) {
-            toast("Subscription not loaded: $productId")
+    // ✅ CHANGED: покупка по basePlanId (1/3/12), но продукт всегда flowqr_standard
+    private fun launchPurchaseByBasePlan(basePlanId: String) {
+        val details = subscriptionDetails ?: run {
+            toast("Subscription details not loaded")
+            querySubscriptionDetails()
             return
         }
 
-        val offer = details.subscriptionOfferDetails?.firstOrNull()
+        // ✅ NEW: находим offerToken по basePlanId
+        val offer = details.subscriptionOfferDetails
+            ?.firstOrNull { it.basePlanId == basePlanId }
+
         if (offer == null) {
-            toast("No offer for $productId")
+            toast("Offer not found for basePlanId=$basePlanId. Check Play Console base plans.")
             return
         }
+
+        pendingBasePlanId = basePlanId // ✅ NEW
 
         val params = BillingFlowParams.newBuilder()
             .setProductDetailsParamsList(
@@ -169,20 +183,30 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
         billingClient.launchBillingFlow(this, params)
     }
 
-    override fun onPurchasesUpdated(
-        result: BillingResult,
-        purchases: MutableList<Purchase>?
-    ) {
-        if (result.responseCode != BillingClient.BillingResponseCode.OK) return
-
-        purchases?.forEach { purchase ->
-            if (purchase.purchaseState == Purchase.PurchaseState.PURCHASED) {
-                val productId = purchase.products.firstOrNull() ?: return@forEach
-
-                verifyOnBackend(purchase.purchaseToken, productId) { ok ->
-                    if (ok) acknowledgeIfNeeded(purchase)
+    override fun onPurchasesUpdated(result: BillingResult, purchases: MutableList<Purchase>?) {
+        when (result.responseCode) {
+            BillingClient.BillingResponseCode.OK -> {
+                purchases?.forEach { purchase ->
+                    when (purchase.purchaseState) {
+                        Purchase.PurchaseState.PURCHASED -> {
+                            // ✅ CHANGED: на бэкенд отправляем subscriptionId, НЕ basePlanId
+                            verifyOnBackend(purchase.purchaseToken, SUBSCRIPTION_ID) { ok ->
+                                if (ok) {
+                                    acknowledgeIfNeeded(purchase)
+                                    toast("Subscription activated")
+                                } else {
+                                    toast("Verification failed")
+                                }
+                            }
+                        }
+                        Purchase.PurchaseState.PENDING -> toast("Payment pending")
+                        else -> {}
+                    }
                 }
             }
+            BillingClient.BillingResponseCode.USER_CANCELED -> toast("Purchase canceled")
+            BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED -> restoreEntitlement()
+            else -> toast("Purchase error: ${result.debugMessage}")
         }
     }
 
@@ -191,12 +215,13 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
             QueryPurchasesParams.newBuilder()
                 .setProductType(BillingClient.ProductType.SUBS)
                 .build()
-        ) { _, list ->
+        ) { result, list ->
+            if (result.responseCode != BillingClient.BillingResponseCode.OK) return@queryPurchasesAsync
             list.forEach { p ->
                 if (p.purchaseState == Purchase.PurchaseState.PURCHASED) {
-                    val productId = p.products.firstOrNull() ?: return@forEach
-                    verifyOnBackend(p.purchaseToken, productId) {
-                        if (it) acknowledgeIfNeeded(p)
+                    // ✅ CHANGED: верифицируем именно flowqr_standard
+                    verifyOnBackend(p.purchaseToken, SUBSCRIPTION_ID) { ok ->
+                        if (ok) acknowledgeIfNeeded(p)
                     }
                 }
             }
@@ -208,19 +233,26 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
         val params = AcknowledgePurchaseParams.newBuilder()
             .setPurchaseToken(purchase.purchaseToken)
             .build()
-        billingClient.acknowledgePurchase(params) { }
+        billingClient.acknowledgePurchase(params) { br ->
+            if (br.responseCode != BillingClient.BillingResponseCode.OK) {
+                toast("Acknowledge failed: ${br.debugMessage}")
+            }
+        }
     }
 
-    // 🔧 CHANGED: передаём РЕАЛЬНЫЙ productId
+    // ✅ CHANGED: productId тут должен быть subscriptionId = flowqr_standard
     private fun verifyOnBackend(
         purchaseToken: String,
         productId: String,
         callback: (Boolean) -> Unit
     ) {
         bg.execute {
+            var conn: HttpURLConnection? = null
             try {
-                val conn = (URL(VERIFY_URL).openConnection() as HttpURLConnection).apply {
+                conn = (URL(VERIFY_URL).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
+                    connectTimeout = 10000
+                    readTimeout = 15000
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json")
                     authHeader?.let { setRequestProperty("Authorization", it) }
@@ -229,61 +261,156 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
                 val body =
                     """{"productId":"$productId","purchaseToken":"$purchaseToken","packageName":"$packageName"}"""
 
-                BufferedOutputStream(conn.outputStream).use {
-                    it.write(body.toByteArray())
+                BufferedOutputStream(conn.outputStream).use { out ->
+                    out.write(body.toByteArray(Charsets.UTF_8))
                 }
 
-                runOnUiThread { callback(conn.responseCode in 200..299) }
+                val code = conn.responseCode
+                val ok = code in 200..299
+                if (ok) {
+                    BufferedReader(InputStreamReader(conn.inputStream)).use { br ->
+                        while (br.readLine() != null) { /* no-op */ }
+                    }
+                }
+                runOnUiThread { callback(ok) }
             } catch (_: Exception) {
                 runOnUiThread { callback(false) }
+            } finally {
+                conn?.disconnect()
             }
         }
     }
 
     // ================= WEBVIEW =================
 
-    @Composable
-    fun WebViewScreen(url: String) {
-        AndroidView(factory = { context ->
-            WebView(context).apply {
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                addJavascriptInterface(BillingJsBridge(), "billing")
-
-                webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView, url: String) {
-                        val js = """
-                          (function(){
-                            var t = localStorage.getItem('accessToken') || localStorage.getItem('token');
-                            if (t && !t.startsWith('Bearer ')) t = 'Bearer ' + t;
-                            if (window.billing && t) window.billing.setAuth(t);
-                          })();
-                        """
-                        view.evaluateJavascript(js, null)
-                    }
-                }
-
-                loadUrl(url)
-            }
-        }, modifier = Modifier.fillMaxSize())
-    }
-
     private fun checkCameraPermission() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED
-        ) requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+        ) {
+            requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun openCustomTab(url: String) {
+        try {
+            val intent = CustomTabsIntent.Builder().build()
+            intent.launchUrl(this, Uri.parse(url))
+        } catch (_: Exception) {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }
+    }
+
+    @Composable
+    fun WebViewScreen(url: String) {
+        AndroidView(
+            factory = { context ->
+                WebView(context).apply {
+                    setBackgroundColor(AColor.TRANSPARENT)
+                    isVerticalScrollBarEnabled = true
+                    overScrollMode = AView.OVER_SCROLL_IF_CONTENT_SCROLLS
+
+                    CookieManager.getInstance().setAcceptCookie(true)
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
+
+                    settings.apply {
+                        javaScriptEnabled = true
+                        domStorageEnabled = true
+                        mediaPlaybackRequiresUserGesture = false
+                        allowContentAccess = true
+                        allowFileAccess = true
+                        mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        useWideViewPort = true
+                        loadWithOverviewMode = true
+                        cacheMode = WebSettings.LOAD_NO_CACHE
+                        javaScriptCanOpenWindowsAutomatically = true
+                        setSupportMultipleWindows(true)
+                        userAgentString = userAgentString.replace("wv", "") + " FlowQRApp/Android"
+                    }
+
+                    // JS Bridge
+                    addJavascriptInterface(BillingJsBridge(this@MainActivity), "billing")
+
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(
+                            view: WebView?,
+                            request: WebResourceRequest
+                        ): Boolean {
+                            val host = request.url.host ?: ""
+                            val isPayment =
+                                host.endsWith("checkout.stripe.com") ||
+                                        host.contains("pay.google.com") ||
+                                        host.contains("payments.google") ||
+                                        host.contains("paypal.com")
+                            return if (isPayment) {
+                                Toast.makeText(context, "Manage your subscription on the website.", Toast.LENGTH_SHORT).show()
+                                true
+                            } else false
+                        }
+
+                        override fun onPageFinished(view: WebView, url: String) {
+                            val js = """
+                                (function(){
+                                  try {
+                                    var t = localStorage.getItem('accessToken') || localStorage.getItem('token');
+                                    if (t && !t.startsWith('Bearer ')) t = 'Bearer ' + t;
+                                    if (window.billing && t) { window.billing.setAuth(t); }
+                                  } catch(e) {}
+                                })();
+                            """.trimIndent()
+                            view.evaluateJavascript(js, null)
+                        }
+                    }
+
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onPermissionRequest(request: PermissionRequest?) {
+                            request?.grant(request.resources)
+                        }
+                        override fun onCreateWindow(
+                            view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?
+                        ): Boolean {
+                            val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+                            val tempWebView = WebView(view?.context!!)
+                            tempWebView.webViewClient = object : WebViewClient() {
+                                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                    url?.let { openCustomTab(it) }
+                                }
+                            }
+                            transport.webView = tempWebView
+                            resultMsg.sendToTarget()
+                            return true
+                        }
+                    }
+
+                    val fullUrl = url +
+                            (if (url.contains("?")) "&" else "?") +
+                            "v=" + System.currentTimeMillis() +
+                            "&source=android_app"
+
+                    loadUrl(fullUrl)
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
     }
 
     private fun toast(msg: String) =
         runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
 
-    // ================= JS BRIDGE =================
+    // ===== JS-мост: window.billing.buy('basic-monthly' | 'basic-3months' | 'basic-year') =====
     @Keep
-    inner class BillingJsBridge {
+    inner class BillingJsBridge(private val activity: MainActivity) {
         @JavascriptInterface
-        fun buy(productId: String) {
-            runOnUiThread { launchPurchase(productId) }
+        fun buy(basePlanId: String) {
+            activity.runOnUiThread {
+                // ✅ CHANGED: basePlanId → offerToken, product всегда flowqr_standard
+                val chosen = when (basePlanId) {
+                    BASE_PLAN_MONTH, BASE_PLAN_3MONTH, BASE_PLAN_YEAR -> basePlanId
+                    else -> BASE_PLAN_MONTH // дефолт
+                }
+                launchPurchaseByBasePlan(chosen)
+            }
         }
+
         @JavascriptInterface
         fun setAuth(bearer: String) {
             authHeader = bearer
