@@ -2,6 +2,7 @@ package com.flowqr.flowqr
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -16,7 +17,13 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.Keep
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
@@ -37,56 +44,52 @@ import android.view.View as AView
 
 class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
 
-    // ================== ✅ CHANGED CONFIG ==================
-    // Это subscriptionId из Play Console (название/идентификатор подписки)
-    private val SUBSCRIPTION_ID = "flowqr_standard"
-
-    // Это basePlanId (не productId!) — ровно как у тебя в Play Console
-    private val BASE_PLAN_MONTH = "basic-monthly"
-    private val BASE_PLAN_3MONTH = "basic-3months"
-    private val BASE_PLAN_YEAR = "basic-year"
-
+    // ====== CONFIG ======
+    private val PRODUCT_ID = "flowqr_standard"
     private val VERIFY_URL =
         "https://warehouse-qr-app-8adwv.ondigitalocean.app/api/billing/play/verify"
-    // =======================================================
+    // =====================
 
     private val bg = Executors.newSingleThreadExecutor()
 
+    // Billing
     private lateinit var billingClient: BillingClient
-
-    // ✅ CHANGED: теперь мы храним ProductDetails ТОЛЬКО для flowqr_standard
-    private var subscriptionDetails: ProductDetails? = null
-
-    // ✅ NEW: сюда будем запоминать какой basePlan выбрал пользователь
-    @Volatile private var pendingBasePlanId: String? = null
+    private var productDetails: ProductDetails? = null
 
     // JWT из WebView (через JS-мост)
     @Volatile private var authHeader: String? = null
 
     private val requestPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ -> }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // ---------- очистка cookies ----------
-        CookieManager.getInstance().removeAllCookies(null)
-        CookieManager.getInstance().flush()
+        // ---------- НОВОЕ: при каждом запуске чистим cookie и WebStorage ----------
+        // ВАЖНО: делать это ДО инициализации любого WebView
+        val cm = CookieManager.getInstance()
+        cm.removeAllCookies(null)
+        cm.flush()
         WebStorage.getInstance().deleteAllData()
+        // -------------------------------------------------------------------------
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = AColor.TRANSPARENT
         window.navigationBarColor = AColor.TRANSPARENT
-
-        WindowInsetsControllerCompat(window, window.decorView).apply {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.navigationBarDividerColor = AColor.TRANSPARENT
+        }
+        val controller = WindowInsetsControllerCompat(window, window.decorView).apply {
             isAppearanceLightStatusBars = false
             isAppearanceLightNavigationBars = false
-            hide(WindowInsetsCompat.Type.navigationBars())
-            systemBarsBehavior =
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
+        controller.hide(WindowInsetsCompat.Type.navigationBars())
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
         checkCameraPermission()
+
+        // init Billing
         initBillingClient()
 
         setContent {
@@ -103,7 +106,7 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
         }
     }
 
-    // ================= BILLING =================
+    // ---------------- Billing setup ----------------
 
     private fun initBillingClient() {
         billingClient = BillingClient.newBuilder(this)
@@ -114,73 +117,60 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
         billingClient.startConnection(object : BillingClientStateListener {
             override fun onBillingSetupFinished(result: BillingResult) {
                 if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                    // ✅ CHANGED: грузим ТОЛЬКО одну подписку
-                    querySubscriptionDetails()
+                    queryProductDetails(PRODUCT_ID)
+                    // восстановим доступ, если уже куплено
                     restoreEntitlement()
                 } else {
                     toast("Billing not ready: ${result.debugMessage}")
                 }
             }
-            override fun onBillingServiceDisconnected() {}
+            override fun onBillingServiceDisconnected() {
+                // можно добавить ретрай
+            }
         })
     }
 
-    // ✅ CHANGED: загрузка ProductDetails для flowqr_standard
-    private fun querySubscriptionDetails() {
-        val products = listOf(
+    private fun queryProductDetails(productId: String) {
+        val productList = listOf(
             QueryProductDetailsParams.Product.newBuilder()
-                .setProductId(SUBSCRIPTION_ID)
+                .setProductId(productId)
                 .setProductType(BillingClient.ProductType.SUBS)
                 .build()
         )
-
         val params = QueryProductDetailsParams.newBuilder()
-            .setProductList(products)
-            .build()
+            .setProductList(productList).build()
 
-        billingClient.queryProductDetailsAsync(params) { result, list ->
+        billingClient.queryProductDetailsAsync(params) { result, detailsList ->
             if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                subscriptionDetails = list.firstOrNull()
-                if (subscriptionDetails == null) {
-                    toast("Subscription not found: $SUBSCRIPTION_ID")
-                }
+                productDetails = detailsList.firstOrNull()
+                if (productDetails == null) toast("Product not found: $productId")
             } else {
-                toast("Failed to load subscription: ${result.debugMessage}")
+                toast("Failed to load product: ${result.debugMessage}")
             }
         }
     }
 
-    // ✅ CHANGED: покупка по basePlanId (1/3/12), но продукт всегда flowqr_standard
-    private fun launchPurchaseByBasePlan(basePlanId: String) {
-        val details = subscriptionDetails ?: run {
-            toast("Subscription details not loaded")
-            querySubscriptionDetails()
+    private fun launchPurchase(productId: String) {
+        val details = productDetails ?: run {
+            toast("Product details not loaded")
+            queryProductDetails(productId)
             return
         }
-
-        // ✅ NEW: находим offerToken по basePlanId
-        val offer = details.subscriptionOfferDetails
-            ?.firstOrNull { it.basePlanId == basePlanId }
-
-        if (offer == null) {
-            toast("Offer not found for basePlanId=$basePlanId. Check Play Console base plans.")
+        val offerToken = details.subscriptionOfferDetails?.firstOrNull()?.offerToken
+        if (offerToken == null) {
+            toast("No offer token (check base plan/offers in Play Console)")
             return
         }
-
-        pendingBasePlanId = basePlanId // ✅ NEW
-
-        val params = BillingFlowParams.newBuilder()
+        val flowParams = BillingFlowParams.newBuilder()
             .setProductDetailsParamsList(
                 listOf(
                     BillingFlowParams.ProductDetailsParams.newBuilder()
                         .setProductDetails(details)
-                        .setOfferToken(offer.offerToken)
+                        .setOfferToken(offerToken)
                         .build()
                 )
-            )
-            .build()
-
-        billingClient.launchBillingFlow(this, params)
+            ).build()
+        billingClient.launchBillingFlow(this, flowParams)
     }
 
     override fun onPurchasesUpdated(result: BillingResult, purchases: MutableList<Purchase>?) {
@@ -189,8 +179,7 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
                 purchases?.forEach { purchase ->
                     when (purchase.purchaseState) {
                         Purchase.PurchaseState.PURCHASED -> {
-                            // ✅ CHANGED: на бэкенд отправляем subscriptionId, НЕ basePlanId
-                            verifyOnBackend(purchase.purchaseToken, SUBSCRIPTION_ID) { ok ->
+                            verifyOnBackend(purchase.purchaseToken, PRODUCT_ID) { ok ->
                                 if (ok) {
                                     acknowledgeIfNeeded(purchase)
                                     toast("Subscription activated")
@@ -199,28 +188,30 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
                                 }
                             }
                         }
-                        Purchase.PurchaseState.PENDING -> toast("Payment pending")
+                        Purchase.PurchaseState.PENDING -> {
+                            toast("Payment pending. You'll get access after it completes.")
+                        }
                         else -> {}
                     }
                 }
             }
             BillingClient.BillingResponseCode.USER_CANCELED -> toast("Purchase canceled")
-            BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED -> restoreEntitlement()
+            BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED -> {
+                // попробуем восстановить
+                restoreEntitlement()
+            }
             else -> toast("Purchase error: ${result.debugMessage}")
         }
     }
 
     private fun restoreEntitlement() {
         billingClient.queryPurchasesAsync(
-            QueryPurchasesParams.newBuilder()
-                .setProductType(BillingClient.ProductType.SUBS)
-                .build()
-        ) { result, list ->
+            QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.SUBS).build()
+        ) { result, purchasesList ->
             if (result.responseCode != BillingClient.BillingResponseCode.OK) return@queryPurchasesAsync
-            list.forEach { p ->
+            purchasesList.forEach { p ->
                 if (p.purchaseState == Purchase.PurchaseState.PURCHASED) {
-                    // ✅ CHANGED: верифицируем именно flowqr_standard
-                    verifyOnBackend(p.purchaseToken, SUBSCRIPTION_ID) { ok ->
+                    verifyOnBackend(p.purchaseToken, PRODUCT_ID) { ok ->
                         if (ok) acknowledgeIfNeeded(p)
                     }
                 }
@@ -231,8 +222,7 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
     private fun acknowledgeIfNeeded(purchase: Purchase) {
         if (purchase.isAcknowledged) return
         val params = AcknowledgePurchaseParams.newBuilder()
-            .setPurchaseToken(purchase.purchaseToken)
-            .build()
+            .setPurchaseToken(purchase.purchaseToken).build()
         billingClient.acknowledgePurchase(params) { br ->
             if (br.responseCode != BillingClient.BillingResponseCode.OK) {
                 toast("Acknowledge failed: ${br.debugMessage}")
@@ -240,7 +230,6 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
         }
     }
 
-    // ✅ CHANGED: productId тут должен быть subscriptionId = flowqr_standard
     private fun verifyOnBackend(
         purchaseToken: String,
         productId: String,
@@ -249,22 +238,20 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
         bg.execute {
             var conn: HttpURLConnection? = null
             try {
-                conn = (URL(VERIFY_URL).openConnection() as HttpURLConnection).apply {
+                val url = URL(VERIFY_URL)
+                conn = (url.openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
                     connectTimeout = 10000
                     readTimeout = 15000
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json")
-                    authHeader?.let { setRequestProperty("Authorization", it) }
+                    authHeader?.let { setRequestProperty("Authorization", it) } // ✅ JWT
                 }
-
                 val body =
                     """{"productId":"$productId","purchaseToken":"$purchaseToken","packageName":"$packageName"}"""
-
                 BufferedOutputStream(conn.outputStream).use { out ->
                     out.write(body.toByteArray(Charsets.UTF_8))
                 }
-
                 val code = conn.responseCode
                 val ok = code in 200..299
                 if (ok) {
@@ -281,7 +268,7 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
         }
     }
 
-    // ================= WEBVIEW =================
+    // ---------------- WebView & JS Bridge ----------------
 
     private fun checkCameraPermission() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
@@ -310,7 +297,9 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
                     overScrollMode = AView.OVER_SCROLL_IF_CONTENT_SCROLLS
 
                     CookieManager.getInstance().setAcceptCookie(true)
+                    // ---------- ИЗМЕНЕНО: отключаем third-party cookies в WebView ----------
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
+                    // -----------------------------------------------------------------------
 
                     settings.apply {
                         javaScriptEnabled = true
@@ -340,6 +329,8 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
                                 host.endsWith("checkout.stripe.com") ||
                                         host.contains("pay.google.com") ||
                                         host.contains("payments.google") ||
+                                        host.contains("giropay") ||
+                                        host.contains("sofort") ||
                                         host.contains("paypal.com")
                             return if (isPayment) {
                                 Toast.makeText(context, "Manage your subscription on the website.", Toast.LENGTH_SHORT).show()
@@ -348,6 +339,8 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
                         }
 
                         override fun onPageFinished(view: WebView, url: String) {
+                            // ⚙️ вытащим JWT из localStorage и передадим в мост
+                            // если токена нет — метод просто ничего не сделает
                             val js = """
                                 (function(){
                                   try {
@@ -381,11 +374,17 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
                         }
                     }
 
+                    // Доп. подчистки в экземпляре WebView
+                    clearFormData()
+                    clearMatches()
+                    clearCache(true)
+                    clearHistory()
+                    setLayerType(WebView.LAYER_TYPE_HARDWARE, null)
+
                     val fullUrl = url +
                             (if (url.contains("?")) "&" else "?") +
                             "v=" + System.currentTimeMillis() +
                             "&source=android_app"
-
                     loadUrl(fullUrl)
                 }
             },
@@ -396,21 +395,15 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
     private fun toast(msg: String) =
         runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
 
-    // ===== JS-мост: window.billing.buy('basic-monthly' | 'basic-3months' | 'basic-year') =====
+    // ===== JS-мост: window.billing.buy(.), window.billing.setAuth('Bearer .') =====
     @Keep
     inner class BillingJsBridge(private val activity: MainActivity) {
         @JavascriptInterface
-        fun buy(basePlanId: String) {
+        fun buy(productId: String) {
             activity.runOnUiThread {
-                // ✅ CHANGED: basePlanId → offerToken, product всегда flowqr_standard
-                val chosen = when (basePlanId) {
-                    BASE_PLAN_MONTH, BASE_PLAN_3MONTH, BASE_PLAN_YEAR -> basePlanId
-                    else -> BASE_PLAN_MONTH // дефолт
-                }
-                launchPurchaseByBasePlan(chosen)
+                launchPurchase(productId.ifBlank { PRODUCT_ID })
             }
         }
-
         @JavascriptInterface
         fun setAuth(bearer: String) {
             authHeader = bearer
