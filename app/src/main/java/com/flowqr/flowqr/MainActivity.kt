@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
     private val PRODUCT_IDS = listOf(
         "basic-monthly",
         "basic-3months",
-        "basic-yearly"
+        "basic-year"
     )
 
     private val VERIFY_URL =
