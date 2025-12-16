@@ -39,6 +39,9 @@ import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
+import org.json.JSONArray
+import org.json.JSONObject
+import kotlin.math.roundToInt
 import android.graphics.Color as AColor
 import android.view.View as AView
 
@@ -150,17 +153,18 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
         }
     }
 
-    private fun launchPurchase(productId: String) {
+    /**
+     * ✅ ИЗМЕНЕНО:
+     * Раньше покупка всегда брала first offerToken.
+     * Теперь мы умеем запускать покупку по конкретному offerToken (выбранный base plan).
+     */
+    private fun launchPurchaseByOfferToken(offerToken: String) {
         val details = productDetails ?: run {
             toast("Product details not loaded")
-            queryProductDetails(productId)
+            queryProductDetails(PRODUCT_ID)
             return
         }
-        val offerToken = details.subscriptionOfferDetails?.firstOrNull()?.offerToken
-        if (offerToken == null) {
-            toast("No offer token (check base plan/offers in Play Console)")
-            return
-        }
+
         val flowParams = BillingFlowParams.newBuilder()
             .setProductDetailsParamsList(
                 listOf(
@@ -170,7 +174,26 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
                         .build()
                 )
             ).build()
+
         billingClient.launchBillingFlow(this, flowParams)
+    }
+
+    /**
+     * ✅ BACKWARD COMPAT:
+     * если фронт вызвал buy("flowqr_standard") — купим первый доступный offerToken.
+     */
+    private fun launchPurchaseDefault() {
+        val details = productDetails ?: run {
+            toast("Product details not loaded")
+            queryProductDetails(PRODUCT_ID)
+            return
+        }
+        val offerToken = details.subscriptionOfferDetails?.firstOrNull()?.offerToken
+        if (offerToken == null) {
+            toast("No offer token (check base plan/offers in Play Console)")
+            return
+        }
+        launchPurchaseByOfferToken(offerToken)
     }
 
     override fun onPurchasesUpdated(result: BillingResult, purchases: MutableList<Purchase>?) {
@@ -179,6 +202,7 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
                 purchases?.forEach { purchase ->
                     when (purchase.purchaseState) {
                         Purchase.PurchaseState.PURCHASED -> {
+                            // ✅ ВАЖНО: verify всегда идёт по PRODUCT_ID подписки, а не по basePlanId
                             verifyOnBackend(purchase.purchaseToken, PRODUCT_ID) { ok ->
                                 if (ok) {
                                     acknowledgeIfNeeded(purchase)
@@ -316,7 +340,7 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
                         userAgentString = userAgentString.replace("wv", "") + " FlowQRApp/Android"
                     }
 
-                    // JS Bridge
+                    // ✅ JS Bridge
                     addJavascriptInterface(BillingJsBridge(this@MainActivity), "billing")
 
                     webViewClient = object : WebViewClient() {
@@ -340,7 +364,6 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
 
                         override fun onPageFinished(view: WebView, url: String) {
                             // ⚙️ вытащим JWT из localStorage и передадим в мост
-                            // если токена нет — метод просто ничего не сделает
                             val js = """
                                 (function(){
                                   try {
@@ -374,7 +397,6 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
                         }
                     }
 
-                    // Доп. подчистки в экземпляре WebView
                     clearFormData()
                     clearMatches()
                     clearCache(true)
@@ -395,15 +417,174 @@ class MainActivity : ComponentActivity(), PurchasesUpdatedListener {
     private fun toast(msg: String) =
         runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
 
-    // ===== JS-мост: window.billing.buy(.), window.billing.setAuth('Bearer .') =====
+    // ============================================================
+    // ✅ ДОБАВЛЕНО: генерация планов для фронта (из Google Play)
+    // Формат "id" мы делаем как: "flowqr_standard|<offerToken>|<basePlanId>"
+    // Фронт этот id отдаёт обратно в buy(id), а мы достаём offerToken.
+    // ============================================================
+
+    private fun monthsFromBillingPeriod(period: String?): Int {
+        // period вида "P1M", "P3M", "P1Y" (ISO 8601)
+        if (period.isNullOrBlank()) return 1
+        return when {
+            period.endsWith("Y") -> {
+                // P1Y -> 12
+                val n = period.removePrefix("P").removeSuffix("Y").toIntOrNull() ?: 1
+                n * 12
+            }
+            period.endsWith("M") -> {
+                val n = period.removePrefix("P").removeSuffix("M").toIntOrNull() ?: 1
+                n
+            }
+            else -> 1
+        }
+    }
+
+    private fun titleFromMonths(m: Int): String {
+        return when (m) {
+            1 -> "1 Month"
+            3 -> "3 Months"
+            12 -> "12 Months"
+            else -> "$m Months"
+        }
+    }
+
+    private fun buildPlansJson(): String {
+        val details = productDetails ?: return "[]"
+        val offers = details.subscriptionOfferDetails ?: return "[]"
+
+        // Соберём план -> (months, priceMicros, formattedPrice, offerToken, basePlanId)
+        data class PlanRow(
+            val id: String,
+            val months: Int,
+            val priceMicros: Long,
+            val formattedPrice: String,
+            val offerToken: String,
+            val basePlanId: String
+        )
+
+        val rows = mutableListOf<PlanRow>()
+
+        for (o in offers) {
+            val phases = o.pricingPhases?.pricingPhaseList ?: continue
+            // Берём рекуррентную фазу (обычно последняя), но чаще всего и первая — ок
+            val phase = phases.lastOrNull() ?: continue
+
+            val months = monthsFromBillingPeriod(phase.billingPeriod)
+            val priceMicros = phase.priceAmountMicros
+            val formatted = phase.formattedPrice ?: ""
+            val offerToken = o.offerToken ?: continue
+            val basePlanId = o.basePlanId ?: ""
+
+            // id отдаём фронту (он вернёт в buy())
+            val id = "$PRODUCT_ID|$offerToken|$basePlanId"
+
+            rows.add(
+                PlanRow(
+                    id = id,
+                    months = months,
+                    priceMicros = priceMicros,
+                    formattedPrice = formatted,
+                    offerToken = offerToken,
+                    basePlanId = basePlanId
+                )
+            )
+        }
+
+        // Если вдруг ничего не нашли
+        if (rows.isEmpty()) return "[]"
+
+        // Найдём "месячный" план для вычисления экономии (если есть)
+        val monthly = rows.minByOrNull { it.months } // обычно 1 месяц
+        val monthlyPerMonthMicros = if (monthly != null) monthly.priceMicros / monthly.months else 0L
+
+        // Best value = минимальная цена за месяц
+        val best = rows.minByOrNull { it.priceMicros.toDouble() / it.months.toDouble() }
+
+        val arr = JSONArray()
+
+        rows.sortedBy { it.months }.forEach { r ->
+            val perMonthMicros = (r.priceMicros.toDouble() / r.months.toDouble()).roundToInt().toLong()
+
+            val savingsPercent: Int? =
+                if (monthlyPerMonthMicros > 0 && r.months > (monthly?.months ?: 1)) {
+                    val discount = 1.0 - (perMonthMicros.toDouble() / monthlyPerMonthMicros.toDouble())
+                    (discount * 100.0).roundToInt().coerceIn(0, 90)
+                } else null
+
+            val obj = JSONObject()
+            obj.put("id", r.id)
+            obj.put("title", titleFromMonths(r.months))
+            obj.put("price", r.formattedPrice)
+
+            // subtitle / badge / savings — НЕ хардкодим цены, это лишь текст
+            when (r.months) {
+                1 -> obj.put("subtitle", "Best for trying out")
+                else -> obj.put("subtitle", "")
+            }
+
+            if (best != null && r.id == best.id) {
+                obj.put("badge", "Best Value")
+            }
+
+            if (savingsPercent != null && savingsPercent > 0) {
+                obj.put("savingsText", "Save $savingsPercent%")
+            }
+
+            // При желании можно отдавать originalPrice, но реальной “старой цены”
+            // в базовых планах обычно нет. Поэтому не трогаем.
+            // obj.put("originalPrice", "")
+
+            arr.put(obj)
+        }
+
+        return arr.toString()
+    }
+
+    // ===== JS-мост: window.billing.buy(.), window.billing.getPlans(), window.billing.setAuth('Bearer .') =====
     @Keep
     inner class BillingJsBridge(private val activity: MainActivity) {
+
+        /**
+         * ✅ ДОБАВЛЕНО:
+         * Фронт вызывает window.billing.getPlans()
+         * Возвращаем JSON.stringify(PlayPlan[])
+         */
         @JavascriptInterface
-        fun buy(productId: String) {
+        fun getPlans(): String {
+            // если details ещё не успели загрузиться — попробуем перезапросить
+            if (productDetails == null) {
+                queryProductDetails(PRODUCT_ID)
+            }
+            return buildPlansJson()
+        }
+
+        /**
+         * ✅ ИЗМЕНЕНО:
+         * Теперь buy принимает либо:
+         *  - "flowqr_standard" (старый режим)
+         *  - "flowqr_standard|<offerToken>|<basePlanId>" (новый режим из модалки)
+         */
+        @JavascriptInterface
+        fun buy(planId: String) {
             activity.runOnUiThread {
-                launchPurchase(productId.ifBlank { PRODUCT_ID })
+                if (planId.isBlank() || planId == PRODUCT_ID) {
+                    launchPurchaseDefault()
+                    return@runOnUiThread
+                }
+
+                // новый формат: productId|offerToken|basePlanId
+                val parts = planId.split("|")
+                if (parts.size >= 2 && parts[0] == PRODUCT_ID) {
+                    val offerToken = parts[1]
+                    launchPurchaseByOfferToken(offerToken)
+                } else {
+                    // на всякий случай fallback
+                    launchPurchaseDefault()
+                }
             }
         }
+
         @JavascriptInterface
         fun setAuth(bearer: String) {
             authHeader = bearer
